@@ -228,6 +228,9 @@ class UserSessionSync:
     def download_file(self, file_hash: str) -> bytes:
         return self._wrap(self.async_session.download_file, file_hash=file_hash)
 
+    def download_file_ipfs(self, file_hash: str) -> bytes:
+        return self._wrap(self.async_session.download_file_ipfs, file_hash=file_hash)
+
     def watch_messages(
         self,
         message_type: Optional[MessageType] = None,
@@ -621,6 +624,23 @@ class AlephClient:
         """
         async with self.http_session.get(
             f"/api/v0/storage/raw/{file_hash}"
+        ) as response:
+            response.raise_for_status()
+            return await response.read()
+        
+    async def download_file_ipfs(
+        self,
+        file_hash: str,
+    ) -> bytes:
+        """
+        Get a file from the storage engine as raw bytes.
+
+        Warning: Downloading large files can be slow and memory intensive.
+
+        :param file_hash: The hash of the file to retrieve.
+        """
+        async with self.http_session.get(
+            f"https://ipfs.io/ipfs/{file_hash}"
         ) as response:
             response.raise_for_status()
             return await response.read()
