@@ -225,10 +225,10 @@ class UserSessionSync:
             end_date=end_date,
         )
 
-    def download_file(self, file_hash: str, chunck_size :int) -> bytes:
+    def download_file(self, file_hash: str, chunck_size :int = 16 * 1024) -> bytes:
         return self._wrap(self.async_session.download_file, file_hash=file_hash, chunck_size=chunck_size)
 
-    def download_file_ipfs(self, file_hash: str, chunck_size : int) -> bytes:
+    def download_file_ipfs(self, file_hash: str, chunck_size : int = 16 * 1024) -> bytes:
         return self._wrap(self.async_session.download_file_ipfs, file_hash=file_hash, chunck_size=chunck_size)
 
     def watch_messages(
