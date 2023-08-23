@@ -6,6 +6,7 @@ import queue
 import threading
 import time
 from datetime import datetime
+from io import BytesIO
 from pathlib import Path
 from typing import (
     Any,
@@ -31,24 +32,28 @@ from aleph_message.models import (
     AlephMessage,
     ForgetContent,
     ForgetMessage,
+    ItemHash,
     ItemType,
-    Message,
     MessageType,
     PostContent,
     PostMessage,
+    ProgramContent,
     ProgramMessage,
     StoreContent,
     StoreMessage,
+    parse_message,
 )
-from aleph_message.models.program import Encoding, ProgramContent
+from aleph_message.models.execution.base import Encoding
 from aleph_message.status import MessageStatus
 from pydantic import ValidationError
 
 from aleph.sdk.types import Account, GenericMessage, StorageEnum
+from aleph.sdk.utils import Writable, copy_async_readable_to_buffer
 
 from .conf import settings
 from .exceptions import (
     BroadcastError,
+    FileTooLarge,
     InvalidMessageError,
     MessageNotFoundError,
     MultipleMessagesError,
@@ -227,6 +232,30 @@ class UserSessionSync:
 
     def download_file(self, file_hash: str) -> bytes:
         return self._wrap(self.async_session.download_file, file_hash=file_hash)
+
+    def download_file_ipfs(self, file_hash: str) -> bytes:
+        return self._wrap(
+            self.async_session.download_file_ipfs,
+            file_hash=file_hash,
+        )
+
+    def download_file_to_buffer(
+        self, file_hash: str, output_buffer: Writable[bytes]
+    ) -> bytes:
+        return self._wrap(
+            self.async_session.download_file_to_buffer,
+            file_hash=file_hash,
+            output_buffer=output_buffer,
+        )
+
+    def download_file_ipfs_to_buffer(
+        self, file_hash: str, output_buffer: Writable[bytes]
+    ) -> bytes:
+        return self._wrap(
+            self.async_session.download_file_ipfs_to_buffer,
+            file_hash=file_hash,
+            output_buffer=output_buffer,
+        )
 
     def watch_messages(
         self,
@@ -445,7 +474,7 @@ class AlephClient:
 
     def __init__(
         self,
-        api_server: Optional[str],
+        api_server: Optional[str] = None,
         api_unix_socket: Optional[str] = None,
         allow_unix_sockets: bool = True,
         timeout: Optional[aiohttp.ClientTimeout] = None,
@@ -608,6 +637,55 @@ class AlephClient:
             resp.raise_for_status()
             return await resp.json()
 
+    async def download_file_to_buffer(
+        self,
+        file_hash: str,
+        output_buffer: Writable[bytes],
+    ) -> None:
+        """
+        Download a file from the storage engine and write it to the specified output buffer.
+        :param file_hash: The hash of the file to retrieve.
+        :param output_buffer: Writable binary buffer. The file will be written to this buffer.
+        """
+
+        async with self.http_session.get(
+            f"/api/v0/storage/raw/{file_hash}"
+        ) as response:
+            if response.status == 200:
+                await copy_async_readable_to_buffer(
+                    response.content, output_buffer, chunk_size=16 * 1024
+                )
+            if response.status == 413:
+                ipfs_hash = ItemHash(file_hash)
+                if ipfs_hash.item_type == ItemType.ipfs:
+                    return await self.download_file_ipfs_to_buffer(
+                        file_hash, output_buffer
+                    )
+                else:
+                    raise FileTooLarge(f"The file from {file_hash} is too large")
+
+    async def download_file_ipfs_to_buffer(
+        self,
+        file_hash: str,
+        output_buffer: Writable[bytes],
+    ) -> None:
+        """
+        Download a file from the storage engine and write it to the specified output buffer.
+
+        :param file_hash: The hash of the file to retrieve.
+        :param output_buffer: The binary output buffer to write the file data to.
+        """
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"https://ipfs.aleph.im/ipfs/{file_hash}"
+            ) as response:
+                if response.status == 200:
+                    await copy_async_readable_to_buffer(
+                        response.content, output_buffer, chunk_size=16 * 1024
+                    )
+                else:
+                    response.raise_for_status()
+
     async def download_file(
         self,
         file_hash: str,
@@ -619,11 +697,24 @@ class AlephClient:
 
         :param file_hash: The hash of the file to retrieve.
         """
-        async with self.http_session.get(
-            f"/api/v0/storage/raw/{file_hash}"
-        ) as response:
-            response.raise_for_status()
-            return await response.read()
+        buffer = BytesIO()
+        await self.download_file_to_buffer(file_hash, output_buffer=buffer)
+        return buffer.getvalue()
+
+    async def download_file_ipfs(
+        self,
+        file_hash: str,
+    ) -> bytes:
+        """
+        Get a file from the ipfs storage engine as raw bytes.
+
+        Warning: Downloading large files can be slow.
+
+        :param file_hash: The hash of the file to retrieve.
+        """
+        buffer = BytesIO()
+        await self.download_file_ipfs_to_buffer(file_hash, output_buffer=buffer)
+        return buffer.getvalue()
 
     async def get_messages(
         self,
@@ -713,7 +804,7 @@ class AlephClient:
             messages: List[AlephMessage] = []
             for message_raw in messages_raw:
                 try:
-                    message = Message(**message_raw)
+                    message = parse_message(message_raw)
                     messages.append(message)
                 except KeyError as e:
                     if not ignore_invalid_messages:
@@ -835,7 +926,7 @@ class AlephClient:
                         break
                     else:
                         data = json.loads(msg.data)
-                        yield Message(**data)
+                        yield parse_message(data)
                 elif msg.type == aiohttp.WSMsgType.ERROR:
                     break
 
@@ -1387,7 +1478,7 @@ class AuthenticatedAlephClient(AlephClient):
                 message_dict["item_type"] = ItemType.storage
 
         message_dict = await self.account.sign_message(message_dict)
-        return Message(**message_dict)
+        return parse_message(message_dict)
 
     async def submit(
         self,

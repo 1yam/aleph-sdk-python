@@ -1,13 +1,14 @@
 import errno
 import logging
 import os
+from enum import Enum
 from pathlib import Path
 from shutil import make_archive
-from typing import Tuple, Type
+from typing import Protocol, Tuple, Type, TypeVar, Union
 from zipfile import BadZipFile, ZipFile
 
 from aleph_message.models import MessageType
-from aleph_message.models.program import Encoding
+from aleph_message.models.execution.program import Encoding
 
 from aleph.sdk.conf import settings
 from aleph.sdk.types import GenericMessage
@@ -76,3 +77,42 @@ def check_unix_socket_valid(unix_socket_path: str) -> bool:
             unix_socket_path,
         )
     return True
+
+
+T = TypeVar("T", str, bytes, covariant=True)
+U = TypeVar("U", str, bytes, contravariant=True)
+
+
+class AsyncReadable(Protocol[T]):
+    async def read(self, n: int = -1) -> T:
+        ...
+
+
+class Writable(Protocol[U]):
+    def write(self, buffer: U) -> int:
+        ...
+
+
+async def copy_async_readable_to_buffer(
+    readable: AsyncReadable[T], buffer: Writable[T], chunk_size: int
+):
+    while True:
+        chunk = await readable.read(chunk_size)
+        if not chunk:
+            break
+        buffer.write(chunk)
+
+
+def enum_as_str(obj: Union[str, Enum]) -> str:
+    """Returns the value of an Enum, or the string itself when passing a string.
+
+    Python 3.11 adds a new formatting of string enums.
+    `str(MyEnum.value)` becomes `MyEnum.value` instead of `value`.
+    """
+    if not isinstance(obj, str):
+        raise TypeError(f"Unsupported enum type: {type(obj)}")
+
+    if isinstance(obj, Enum):
+        return obj.value
+
+    return obj
