@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 def get_verification_buffer(message: Dict) -> bytes:
     """
-    Returns the verification buffer that Aleph nodes use to verify the signature of a message.
+    Returns the verification buffer that aleph.im nodes use to verify the signature of a message.
     Note:
         The verification buffer is a string of the following format:
         b"{chain}\\n{sender}\\n{type}\\n{item_hash}"
@@ -65,14 +65,27 @@ class BaseAccount(ABC):
         else:
             raise ValueError("Message sender does not match the account's public key.")
 
-    @abstractmethod
     async def sign_message(self, message: Dict) -> Dict:
         """
-        Returns a signed message from an Aleph message.
+        Returns a signed message from an aleph.im message.
         Args:
             message: Message to sign
         Returns:
             Dict: Signed message
+        """
+        message = self._setup_sender(message)
+        signature = await self.sign_raw(get_verification_buffer(message))
+        message["signature"] = signature.hex()
+        return message
+
+    @abstractmethod
+    async def sign_raw(self, buffer: bytes) -> bytes:
+        """
+        Returns a signed message from a raw buffer.
+        Args:
+            buffer: Buffer to sign
+        Returns:
+            bytes: Signature in preferred format
         """
         raise NotImplementedError
 
@@ -146,3 +159,10 @@ def get_fallback_private_key(path: Optional[Path] = None) -> bytes:
         if not default_key_path.exists():
             default_key_path.symlink_to(path)
     return private_key
+
+
+def bytes_from_hex(hex_string: str) -> bytes:
+    if hex_string.startswith("0x"):
+        hex_string = hex_string[2:]
+    hex_string = bytes.fromhex(hex_string)
+    return hex_string

@@ -5,11 +5,13 @@ from unittest.mock import AsyncMock
 import pytest
 from aleph_message.models import MessagesResponse, MessageType
 
-from aleph.sdk.client import AlephClient
+from aleph.sdk import AlephHttpClient
 from aleph.sdk.conf import settings
+from aleph.sdk.query.filters import MessageFilter, PostFilter
+from aleph.sdk.query.responses import PostsResponse
 
 
-def make_mock_session(get_return_value: Dict[str, Any]) -> AlephClient:
+def make_mock_session(get_return_value: Dict[str, Any]) -> AlephHttpClient:
     class MockResponse:
         async def __aenter__(self):
             return self
@@ -21,6 +23,9 @@ def make_mock_session(get_return_value: Dict[str, Any]) -> AlephClient:
         def status(self):
             return 200
 
+        def raise_for_status(self):
+            ...
+
         async def json(self):
             return get_return_value
 
@@ -30,7 +35,7 @@ def make_mock_session(get_return_value: Dict[str, Any]) -> AlephClient:
 
     http_session = MockHttpSession()
 
-    client = AlephClient(api_server="http://localhost")
+    client = AlephHttpClient(api_server="http://localhost")
     client.http_session = http_session
 
     return client
@@ -65,22 +70,26 @@ async def test_fetch_aggregates():
 
 @pytest.mark.asyncio
 async def test_get_posts():
-    async with AlephClient(api_server=settings.API_HOST) as session:
-        response: MessagesResponse = await session.get_messages(
-            message_type=MessageType.post,
+    async with AlephHttpClient(api_server=settings.API_HOST) as session:
+        response: PostsResponse = await session.get_posts(
+            page_size=2,
+            post_filter=PostFilter(
+                channels=["TEST"],
+            ),
         )
 
-        messages = response.messages
-        assert len(messages) > 1
-        for message in messages:
-            assert message.type == MessageType.post
+        posts = response.posts
+        assert len(posts) > 1
 
 
 @pytest.mark.asyncio
 async def test_get_messages():
-    async with AlephClient(api_server=settings.API_HOST) as session:
+    async with AlephHttpClient(api_server=settings.API_HOST) as session:
         response: MessagesResponse = await session.get_messages(
-            pagination=2,
+            page_size=2,
+            message_filter=MessageFilter(
+                message_types=[MessageType.post],
+            ),
         )
 
         messages = response.messages

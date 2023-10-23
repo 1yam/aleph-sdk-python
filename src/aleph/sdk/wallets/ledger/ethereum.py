@@ -9,7 +9,7 @@ from ledgereth.comms import init_dongle
 from ledgereth.messages import sign_message
 from ledgereth.objects import LedgerAccount, SignedMessage
 
-from ...chains.common import BaseAccount, get_verification_buffer
+from ...chains.common import BaseAccount, bytes_from_hex, get_verification_buffer
 
 
 class LedgerETHAccount(BaseAccount):
@@ -38,10 +38,16 @@ class LedgerETHAccount(BaseAccount):
         a known wallet address.
         """
         device = device or init_dongle()
-        account = find_account(address=address, dongle=device, count=5)
-        return LedgerETHAccount(
-            account=account,
-            device=device,
+        account: Optional[LedgerAccount] = find_account(
+            address=address, dongle=device, count=5
+        )
+        return (
+            LedgerETHAccount(
+                account=account,
+                device=device,
+            )
+            if account
+            else None
         )
 
     @staticmethod
@@ -49,7 +55,7 @@ class LedgerETHAccount(BaseAccount):
         """Initialize an aleph.im account from a LedgerHQ device from
         a known wallet account path."""
         device = device or init_dongle()
-        account = get_account_by_path(path_string=path, dongle=device)
+        account: LedgerAccount = get_account_by_path(path_string=path, dongle=device)
         return LedgerETHAccount(
             account=account,
             device=device,
@@ -67,6 +73,12 @@ class LedgerETHAccount(BaseAccount):
 
         message["signature"] = signature
         return message
+
+    async def sign_raw(self, buffer: bytes) -> bytes:
+        """Sign a raw buffer."""
+        sig: SignedMessage = sign_message(buffer, dongle=self._device)
+        signature: HexStr = sig.signature
+        return bytes_from_hex(signature)
 
     def get_address(self) -> str:
         return self._account.address

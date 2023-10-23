@@ -10,7 +10,7 @@ import click
 
 from aleph.sdk.chains.common import get_fallback_private_key
 from aleph.sdk.chains.ethereum import ETHAccount
-from aleph.sdk.client import AuthenticatedAlephClient
+from aleph.sdk.client import AuthenticatedAlephHttpClient
 from aleph.sdk.conf import settings
 
 
@@ -26,8 +26,8 @@ def get_input_data(value):
         return value.decode("utf-8")
 
 
-def send_metrics(account, metrics):
-    with AuthenticatedAlephClient(
+async def send_metrics(account, metrics):
+    async with AuthenticatedAlephHttpClient(
         account=account, api_server=settings.API_HOST
     ) as session:
         return session.create_aggregate(
@@ -100,7 +100,7 @@ async def gateway(
         if not userdata["received"]:
             await client.reconnect()
 
-        async with AuthenticatedAlephClient(
+        async with AuthenticatedAlephHttpClient(
             account=account, api_server=settings.API_HOST
         ) as session:
             for key, value in state.items():

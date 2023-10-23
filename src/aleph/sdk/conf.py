@@ -16,6 +16,11 @@ class Settings(BaseSettings):
         description="Path to the private key used to sign messages",
     )
 
+    PRIVATE_MNEMONIC_FILE: Path = Field(
+        default=Path("substrate.mnemonic"),
+        description="Path to the mnemonic used to create Substrate keypairs",
+    )
+
     PRIVATE_KEY_STRING: Optional[str] = None
     API_HOST: str = "https://api2.aleph.im"
     MAX_INLINE_SIZE: int = 50000
@@ -24,10 +29,8 @@ class Settings(BaseSettings):
     REMOTE_CRYPTO_UNIX_SOCKET: Optional[str] = None
     ADDRESS_TO_USE: Optional[str] = None
 
-    DEFAULT_RUNTIME_ID: str = (
-        "bd79839bf96e595a06da5ac0b6ba51dea6f7e2591bb913deccded04d831d29f4"
-    )
-    DEFAULT_VM_MEMORY: int = 128
+    DEFAULT_RUNTIME_ID: str = "f873715dc2feec3833074bd4b8745363a0e0093746b987b4c8191268883b2463"  # Debian 12 official runtime
+    DEFAULT_VM_MEMORY: int = 256
     DEFAULT_VM_VCPUS: int = 1
     DEFAULT_VM_TIMEOUT: float = 30.0
 
@@ -56,4 +59,9 @@ assert settings.CONFIG_HOME
 if str(settings.PRIVATE_KEY_FILE) == "ethereum.key":
     settings.PRIVATE_KEY_FILE = Path(
         settings.CONFIG_HOME, "private-keys", "ethereum.key"
+    )
+
+if str(settings.PRIVATE_MNEMONIC_FILE) == "substrate.mnemonic":
+    settings.PRIVATE_MNEMONIC_FILE = Path(
+        settings.CONFIG_HOME, "private-keys", "substrate.mnemonic"
     )
