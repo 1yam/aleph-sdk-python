@@ -21,17 +21,19 @@ classifiers = [
     "Operating System :: MacOS :: MacOS X",
     "Topic :: Software Development :: Libraries",
 ]
+
 dependencies = [
-    "aiohttp>=3.8.3",
-    "aleph-message>=0.4.6",
-    "coincurve; python_version<\"3.11\"",
-    "coincurve>=19.0.0; python_version>=\"3.11\"",
-    "eth_abi>=4.0.0; python_version>=\"3.11\"",
-    "eth_account>=0.4.0,<0.11.0",
-    "python-magic",
-    "typer",
-    "typing_extensions",
+  "aiohttp>=3.8.3,<4.0.0",
+  "aleph-message>=0.4.6",
+  "coincurve>=19.0.0; python_version>=\"3.11\"",
+  "coincurve; python_version<\"3.11\"",
+  "eth_abi>=4.0.0; python_version>=\"3.11\"",
+  "eth_account>=0.4.0,<0.11.0",
+  "python-magic==0.4.27",
+  "typer==0.12.3",
+  "typing_extensions",
 ]
+
 
 [project.optional-dependencies]
 cosmos = [
