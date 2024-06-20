@@ -24,11 +24,17 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - run: sudo apt-get install -y python3-pip libsecp256k1-dev
+      - run: sudo apt-get install -y python3-pip libsecp256k1-dev libgmp-dev
 
       - run: |
           python3 -m venv /tmp/venv
+          python -m pip install --upgrade pip
           /tmp/venv/bin/python -m pip install --upgrade pip hatch hatchling coverage
+
+      - name: Install secp256k1 for Python 3.12
+        if: matrix.python-version == '3.12'
+        run: |
+          python -m pip install secp256k1
 
       - run: |
           /tmp/venv/bin/pip freeze
