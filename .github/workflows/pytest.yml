@@ -28,11 +28,9 @@ jobs:
 
       - run: |
           python3 -m venv /tmp/venv
-          /tmp/venv/bin/python -m pip install --upgrade pip hatch coverage
-          /tmp/venv/bin/python -m pip install --upgrade pip setuptools wheel hatch coverage
+          /tmp/venv/bin/python -m pip install --upgrade pip hatch hatchling coverage
 
       - run: |
-          /tmp/venv/bin/pip freeze
           /tmp/venv/bin/hatch run testing:pip freeze
           /tmp/venv/bin/hatch run testing:test
         if: matrix.python-version != '3.11'
