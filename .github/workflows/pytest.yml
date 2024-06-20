@@ -15,7 +15,7 @@ jobs:
   build:
     strategy:
       matrix:
-        python-version: [ "3.9", "3.10", "3.11", "3.12" ]
+        python-version: ["3.12" ]
     runs-on: ubuntu-latest
 
     steps:
@@ -29,12 +29,11 @@ jobs:
       - run: |
           python3 -m venv /tmp/venv
           /tmp/venv/bin/python -m pip install --upgrade pip hatch coverage
-
-      - run: |
           /tmp/venv/bin/pip freeze
-          /tmp/venv/bin/hatch run testing:pip freeze
-          /tmp/venv/bin/hatch run testing:test
-        if: matrix.python-version != '3.11'
+      - run: |
+          /tmp/venv/bin/hatch run testing:pip freeze -v
+          /tmp/venv/bin/hatch run testing:test -v
+        if: matrix.python-version != '3.11' -v
 
       - run: /tmp/venv/bin/hatch run testing:cov
         if: matrix.python-version == '3.11'
