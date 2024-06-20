@@ -28,8 +28,7 @@ jobs:
 
       - run: |
           python3 -m venv /tmp/venv
-          sudo apt install libsecp256k1-dev
-          /tmp/venv/bin/python -m pip install --upgrade pip hatch coverage wheel setuptools secp256k1
+          /tmp/venv/bin/python -m pip install --upgrade pip hatch coverage wheel setuptool
     
       - run: |
           /tmp/venv/bin/hatch run testing:pip freeze
