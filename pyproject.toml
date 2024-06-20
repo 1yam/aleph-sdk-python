@@ -31,6 +31,7 @@ dependencies = [
     "python-magic",
     "typer",
     "typing_extensions",
+    "secp256k1",
 ]
 
 [project.optional-dependencies]
