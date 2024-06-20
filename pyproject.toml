@@ -124,6 +124,7 @@ dependencies = [
     "pytest-asyncio==0.23.5",
     "fastapi",
     "httpx",
+    "fastecdsa",
     "secp256k1",
 ]
 [tool.hatch.envs.testing.scripts]
