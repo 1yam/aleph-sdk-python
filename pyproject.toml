@@ -30,6 +30,7 @@ dependencies = [
     "eth_account>=0.4.0,<0.11.0",
     "python-magic",
     "typer",
+    "pycryptodome",
     "typing_extensions",
 ]
 
