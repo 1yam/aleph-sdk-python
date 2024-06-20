@@ -31,11 +31,6 @@ jobs:
           python -m pip install --upgrade pip
           /tmp/venv/bin/python -m pip install --upgrade pip hatch hatchling coverage
 
-      - name: Install secp256k1 for Python 3.12
-        if: matrix.python-version == '3.12'
-        run: |
-          python -m pip install secp256k1
-
       - run: |
           /tmp/venv/bin/pip freeze
           /tmp/venv/bin/hatch run testing:test

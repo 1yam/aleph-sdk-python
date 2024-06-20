@@ -68,7 +68,7 @@ tezos = [
 ]
 encryption = [
     "eciespy; python_version<\"3.11\"",
-    "eciespy>=0.4.2; python_version>=\"3.11\"",
+    "eciespy>=0.3.13; python_version>=\"3.11\"",
 ]
 all = [
     "aleph-sdk-python[cosmos,dns,docs,ledger,mqtt,nuls2,polkadot,solana,tezos,encryption]",
@@ -124,7 +124,8 @@ dependencies = [
     "pytest-asyncio==0.23.5",
     "fastapi",
     "httpx",
-    "secp256k1",
+    "eciespy; python_version<\"3.11\"",
+    "eciespy>=0.3.13; python_version>=\"3.11\"",
 ]
 [tool.hatch.envs.testing.scripts]
 test = "pytest {args:} ./src/ ./tests/ ./examples/"
