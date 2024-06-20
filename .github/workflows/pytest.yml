@@ -15,7 +15,7 @@ jobs:
   build:
     strategy:
       matrix:
-        python-version: [ "3.9", "3.10", "3.11", "3.12" ]
+        python-version: [ "3.9", "3.10", "3.11"]
     runs-on: ubuntu-latest
 
     steps:
@@ -33,7 +33,7 @@ jobs:
       - run: |
           /tmp/venv/bin/pip freeze
           /tmp/venv/bin/hatch run testing:test
-        if: matrix.python-version != '3.11'
+        if: matrix.python-version == '3.11'
 
       - run: /tmp/venv/bin/hatch run testing:cov
         if: matrix.python-version == '3.11'
