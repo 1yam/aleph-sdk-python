@@ -1,7 +1,11 @@
+import asyncio
 import json
+from functools import wraps
+from io import BytesIO
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import Any, Callable, Dict, List
+from typing import Any, Callable, Dict, List, Optional, Union
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest as pytest
 from aleph_message.models import AggregateMessage, AlephMessage, PostMessage
@@ -10,7 +14,9 @@ import aleph.sdk.chains.ethereum as ethereum
 import aleph.sdk.chains.sol as solana
 import aleph.sdk.chains.substrate as substrate
 import aleph.sdk.chains.tezos as tezos
+from aleph.sdk import AlephHttpClient, AuthenticatedAlephHttpClient
 from aleph.sdk.chains.common import get_fallback_private_key
+from aleph.sdk.types import Account
 
 
 @pytest.fixture
@@ -51,6 +57,13 @@ def substrate_account() -> substrate.DOTAccount:
 def json_messages():
     messages_path = Path(__file__).parent / "messages.json"
     with open(messages_path) as f:
+        return json.load(f)
+
+
+@pytest.fixture
+def rejected_message():
+    message_path = Path(__file__).parent / "rejected_message.json"
+    with open(message_path) as f:
         return json.load(f)
 
 
@@ -112,13 +125,162 @@ def aleph_messages() -> List[AlephMessage]:
 
 
 @pytest.fixture
+def json_post() -> dict:
+    with open(Path(__file__).parent / "post.json", "r") as f:
+        return json.load(f)
+
+
+@pytest.fixture
 def raw_messages_response(aleph_messages) -> Callable[[int], Dict[str, Any]]:
     return lambda page: {
-        "messages": [message.dict() for message in aleph_messages]
-        if int(page) == 1
-        else [],
+        "messages": (
+            [message.dict() for message in aleph_messages] if int(page) == 1 else []
+        ),
         "pagination_item": "messages",
         "pagination_page": int(page),
         "pagination_per_page": max(len(aleph_messages), 20),
         "pagination_total": len(aleph_messages) if page == 1 else 0,
     }
+
+
+@pytest.fixture
+def raw_posts_response(json_post) -> Callable[[int], Dict[str, Any]]:
+    return lambda page: {
+        "posts": [json_post] if int(page) == 1 else [],
+        "pagination_item": "posts",
+        "pagination_page": int(page),
+        "pagination_per_page": 1,
+        "pagination_total": 1 if page == 1 else 0,
+    }
+
+
+class MockResponse:
+    def __init__(self, sync: bool):
+        self.sync = sync
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb): ...
+
+    async def raise_for_status(self): ...
+
+    @property
+    def status(self):
+        return 200 if self.sync else 202
+
+    async def json(self):
+        message_status = "processed" if self.sync else "pending"
+        return {
+            "message_status": message_status,
+            "publication_status": {"status": "success", "failed": []},
+        }
+
+    async def text(self):
+        return json.dumps(await self.json())
+
+
+@pytest.fixture
+def mock_session_with_post_success(
+    ethereum_account: Account,
+) -> AuthenticatedAlephHttpClient:
+    http_session = AsyncMock()
+    http_session.post = MagicMock()
+    http_session.post.side_effect = lambda *args, **kwargs: MockResponse(
+        sync=kwargs.get("sync", False)
+    )
+
+    client = AuthenticatedAlephHttpClient(
+        account=ethereum_account, api_server="http://localhost"
+    )
+    client.http_session = http_session
+
+    return client
+
+
+def async_wrap(cls):
+    class AsyncWrapper:
+        def __init__(self, *args, **kwargs):
+            self._instance = cls(*args, **kwargs)
+
+        def __getattr__(self, item):
+            attr = getattr(self._instance, item)
+            if callable(attr):
+
+                @wraps(attr)
+                async def method(*args, **kwargs):
+                    loop = asyncio.get_running_loop()
+                    return await loop.run_in_executor(None, attr, *args, **kwargs)
+
+                return method
+            return attr
+
+    return AsyncWrapper
+
+
+AsyncBytesIO = async_wrap(BytesIO)
+
+
+def make_custom_mock_response(
+    resp: Union[Dict[str, Any], bytes], status=200
+) -> MockResponse:
+    class CustomMockResponse(MockResponse):
+        content: Optional[AsyncBytesIO]
+
+        async def json(self):
+            return resp
+
+        @property
+        def status(self):
+            return status
+
+    mock = CustomMockResponse(sync=True)
+
+    try:
+        mock.content = AsyncBytesIO(resp)
+    except Exception as e:
+        print(e)
+
+    return mock
+
+
+def make_mock_get_session(
+    get_return_value: Union[Dict[str, Any], bytes]
+) -> AlephHttpClient:
+    class MockHttpSession(AsyncMock):
+        def get(self, *_args, **_kwargs):
+            return make_custom_mock_response(get_return_value)
+
+    http_session = MockHttpSession()
+
+    client = AlephHttpClient(api_server="http://localhost")
+    client.http_session = http_session
+
+    return client
+
+
+@pytest.fixture
+def mock_session_with_rejected_message(
+    ethereum_account, rejected_message
+) -> AuthenticatedAlephHttpClient:
+    class MockHttpSession(AsyncMock):
+        def get(self, *_args, **_kwargs):
+            return make_custom_mock_response(rejected_message)
+
+        def post(self, *_args, **_kwargs):
+            return make_custom_mock_response(
+                {
+                    "message_status": "rejected",
+                    "publication_status": {"status": "success", "failed": []},
+                },
+                status=422,
+            )
+
+    http_session = MockHttpSession()
+
+    client = AuthenticatedAlephHttpClient(
+        account=ethereum_account, api_server="http://localhost"
+    )
+    client.http_session = http_session
+
+    return client

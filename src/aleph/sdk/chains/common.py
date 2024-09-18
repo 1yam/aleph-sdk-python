@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Dict, Optional
 
 from coincurve.keys import PrivateKey
-from ecies import decrypt, encrypt
+from typing_extensions import deprecated
 
 from aleph.sdk.conf import settings
 from aleph.sdk.utils import enum_as_str
@@ -30,9 +30,9 @@ def get_verification_buffer(message: Dict) -> bytes:
     # Convert Enum values to strings
     return "\n".join(
         (
-            enum_as_str(message["chain"]),
+            enum_as_str(message["chain"]) or "",
             message["sender"],
-            enum_as_str(message["type"]),
+            enum_as_str(message["type"]) or "",
             message["item_hash"],
         )
     ).encode()
@@ -103,6 +103,7 @@ class BaseAccount(ABC):
         """
         raise NotImplementedError
 
+    @deprecated("This method will be moved to its own module `aleph.sdk.encryption`")
     async def encrypt(self, content: bytes) -> bytes:
         """
         Encrypts a message using the account's public key.
@@ -111,12 +112,19 @@ class BaseAccount(ABC):
         Returns:
             bytes: Encrypted content as bytes
         """
+        try:
+            from ecies import encrypt
+        except ImportError:
+            raise ImportError(
+                "Install `eciespy` or `aleph-sdk-python[encryption]` to use this method"
+            )
         if self.CURVE == "secp256k1":
             value: bytes = encrypt(self.get_public_key(), content)
             return value
         else:
             raise NotImplementedError
 
+    @deprecated("This method will be moved to its own module `aleph.sdk.encryption`")
     async def decrypt(self, content: bytes) -> bytes:
         """
         Decrypts a message using the account's private key.
@@ -125,6 +133,12 @@ class BaseAccount(ABC):
         Returns:
             bytes: Decrypted content as bytes
         """
+        try:
+            from ecies import decrypt
+        except ImportError:
+            raise ImportError(
+                "Install `eciespy` or `aleph-sdk-python[encryption]` to use this method"
+            )
         if self.CURVE == "secp256k1":
             value: bytes = decrypt(self.private_key, content)
             return value

@@ -1,6 +1,7 @@
 # An interface for all clients to implement.
-
+import json
 import logging
+import time
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import (
@@ -18,17 +19,26 @@ from typing import (
 
 from aleph_message.models import (
     AlephMessage,
+    ItemHash,
+    ItemType,
     MessagesResponse,
     MessageType,
+    Payment,
     PostMessage,
+    parse_message,
 )
+from aleph_message.models.execution.environment import HypervisorType
 from aleph_message.models.execution.program import Encoding
 from aleph_message.status import MessageStatus
+
+from aleph.sdk.conf import settings
+from aleph.sdk.types import Account
+from aleph.sdk.utils import extended_json_encoder
 
 from ..query.filters import MessageFilter, PostFilter
 from ..query.responses import PostsResponse
 from ..types import GenericMessage, StorageEnum
-from ..utils import Writable
+from ..utils import Writable, compute_sha256
 
 DEFAULT_PAGE_SIZE = 200
 
@@ -42,7 +52,7 @@ class AlephClient(ABC):
         :param address: Address of the owner of the aggregate
         :param key: Key of the aggregate
         """
-        pass
+        raise NotImplementedError("Did you mean to import `AlephHttpClient`?")
 
     @abstractmethod
     async def fetch_aggregates(
@@ -54,7 +64,7 @@ class AlephClient(ABC):
         :param address: Address of the owner of the aggregate
         :param keys: Keys of the aggregates to fetch (Default: all items)
         """
-        pass
+        raise NotImplementedError("Did you mean to import `AlephHttpClient`?")
 
     @abstractmethod
     async def get_posts(
@@ -74,7 +84,7 @@ class AlephClient(ABC):
         :param ignore_invalid_messages: Ignore invalid messages (Default: True)
         :param invalid_messages_log_level: Log level to use for invalid messages (Default: logging.NOTSET)
         """
-        pass
+        raise NotImplementedError("Did you mean to import `AlephHttpClient`?")
 
     async def get_posts_iterator(
         self,
@@ -98,18 +108,29 @@ class AlephClient(ABC):
                 yield post
 
     @abstractmethod
-    async def download_file(
-        self,
-        file_hash: str,
-    ) -> bytes:
+    async def download_file(self, file_hash: str) -> bytes:
         """
         Get a file from the storage engine as raw bytes.
 
-        Warning: Downloading large files can be slow and memory intensive.
+        Warning: Downloading large files can be slow and memory intensive. Use `download_file_to()` to download them directly to disk instead.
 
         :param file_hash: The hash of the file to retrieve.
         """
-        pass
+        raise NotImplementedError("Did you mean to import `AlephHttpClient`?")
+
+    @abstractmethod
+    async def download_file_to_path(
+        self,
+        file_hash: str,
+        path: Union[Path, str],
+    ) -> Path:
+        """
+        Download a file from the storage engine to given path.
+
+        :param file_hash: The hash of the file to retrieve.
+        :param path: The path to which the file should be saved.
+        """
+        raise NotImplementedError()
 
     async def download_file_ipfs(
         self,
@@ -167,7 +188,7 @@ class AlephClient(ABC):
         :param ignore_invalid_messages: Ignore invalid messages (Default: True)
         :param invalid_messages_log_level: Log level to use for invalid messages (Default: logging.NOTSET)
         """
-        pass
+        raise NotImplementedError("Did you mean to import `AlephHttpClient`?")
 
     async def get_messages_iterator(
         self,
@@ -195,16 +216,14 @@ class AlephClient(ABC):
         self,
         item_hash: str,
         message_type: Optional[Type[GenericMessage]] = None,
-        channel: Optional[str] = None,
     ) -> GenericMessage:
         """
         Get a single message from its `item_hash` and perform some basic validation.
 
         :param item_hash: Hash of the message to fetch
         :param message_type: Type of message to fetch
-        :param channel: Channel of the message to fetch
         """
-        pass
+        raise NotImplementedError("Did you mean to import `AlephHttpClient`?")
 
     @abstractmethod
     def watch_messages(
@@ -216,10 +235,12 @@ class AlephClient(ABC):
 
         :param message_filter: Filter to apply to the messages
         """
-        pass
+        raise NotImplementedError("Did you mean to import `AlephHttpClient`?")
 
 
 class AuthenticatedAlephClient(AlephClient):
+    account: Account
+
     @abstractmethod
     async def create_post(
         self,
@@ -244,7 +265,9 @@ class AuthenticatedAlephClient(AlephClient):
         :param storage_engine: An optional storage engine to use for the message, if not inlined (Default: "storage")
         :param sync: If true, waits for the message to be processed by the API server (Default: False)
         """
-        pass
+        raise NotImplementedError(
+            "Did you mean to import `AuthenticatedAlephHttpClient`?"
+        )
 
     @abstractmethod
     async def create_aggregate(
@@ -266,7 +289,9 @@ class AuthenticatedAlephClient(AlephClient):
         :param inline: Whether to write content inside the message (Default: True)
         :param sync: If true, waits for the message to be processed by the API server (Default: False)
         """
-        pass
+        raise NotImplementedError(
+            "Did you mean to import `AuthenticatedAlephHttpClient`?"
+        )
 
     @abstractmethod
     async def create_store(
@@ -298,7 +323,9 @@ class AuthenticatedAlephClient(AlephClient):
         :param channel: Channel to post the message to (Default: "TEST")
         :param sync: If true, waits for the message to be processed by the API server (Default: False)
         """
-        pass
+        raise NotImplementedError(
+            "Did you mean to import `AuthenticatedAlephHttpClient`?"
+        )
 
     @abstractmethod
     async def create_program(
@@ -315,6 +342,9 @@ class AuthenticatedAlephClient(AlephClient):
         vcpus: Optional[int] = None,
         timeout_seconds: Optional[float] = None,
         persistent: bool = False,
+        allow_amend: bool = False,
+        internet: bool = True,
+        aleph_api: bool = True,
         encoding: Encoding = Encoding.zip,
         volumes: Optional[List[Mapping]] = None,
         subscriptions: Optional[List[Mapping]] = None,
@@ -335,17 +365,72 @@ class AuthenticatedAlephClient(AlephClient):
         :param vcpus: Number of vCPUs to allocate (Default: 1)
         :param timeout_seconds: Timeout in seconds (Default: 30.0)
         :param persistent: Whether the program should be persistent or not (Default: False)
+        :param allow_amend: Whether the deployed VM image may be changed (Default: False)
+        :param internet: Whether the VM should have internet connectivity. (Default: True)
+        :param aleph_api: Whether the VM needs access to Aleph messages API (Default: True)
         :param encoding: Encoding to use (Default: Encoding.zip)
         :param volumes: Volumes to mount
         :param subscriptions: Patterns of aleph.im messages to forward to the program's event receiver
         :param metadata: Metadata to attach to the message
         """
-        pass
+        raise NotImplementedError(
+            "Did you mean to import `AuthenticatedAlephHttpClient`?"
+        )
+
+    @abstractmethod
+    async def create_instance(
+        self,
+        rootfs: str,
+        rootfs_size: int,
+        payment: Optional[Payment] = None,
+        environment_variables: Optional[Mapping[str, str]] = None,
+        storage_engine: StorageEnum = StorageEnum.storage,
+        channel: Optional[str] = None,
+        address: Optional[str] = None,
+        sync: bool = False,
+        memory: Optional[int] = None,
+        vcpus: Optional[int] = None,
+        timeout_seconds: Optional[float] = None,
+        allow_amend: bool = False,
+        internet: bool = True,
+        aleph_api: bool = True,
+        hypervisor: Optional[HypervisorType] = None,
+        volumes: Optional[List[Mapping]] = None,
+        volume_persistence: str = "host",
+        ssh_keys: Optional[List[str]] = None,
+        metadata: Optional[Mapping[str, Any]] = None,
+    ) -> Tuple[AlephMessage, MessageStatus]:
+        """
+        Post a (create) INSTANCE message.
+
+        :param rootfs: Root filesystem to use
+        :param rootfs_size: Size of root filesystem
+        :param payment: Payment method used to pay for the instance
+        :param environment_variables: Environment variables to pass to the program
+        :param storage_engine: Storage engine to use (Default: "storage")
+        :param channel: Channel to use (Default: "TEST")
+        :param address: Address to use (Default: account.get_address())
+        :param sync: If true, waits for the message to be processed by the API server
+        :param memory: Memory in MB for the VM to be allocated (Default: 128)
+        :param vcpus: Number of vCPUs to allocate (Default: 1)
+        :param timeout_seconds: Timeout in seconds (Default: 30.0)
+        :param allow_amend: Whether the deployed VM image may be changed (Default: False)
+        :param internet: Whether the VM should have internet connectivity. (Default: True)
+        :param aleph_api: Whether the VM needs access to Aleph messages API (Default: True)
+        :param encoding: Encoding to use (Default: Encoding.zip)
+        :param volumes: Volumes to mount
+        :param volume_persistence: Where volumes are persisted, can be "host" or "store", meaning distributed across Aleph.im (Default: "host")
+        :param ssh_keys: SSH keys to authorize access to the VM
+        :param metadata: Metadata to attach to the message
+        """
+        raise NotImplementedError(
+            "Did you mean to import `AuthenticatedAlephHttpClient`?"
+        )
 
     @abstractmethod
     async def forget(
         self,
-        hashes: List[str],
+        hashes: List[ItemHash],
         reason: Optional[str],
         storage_engine: StorageEnum = StorageEnum.storage,
         channel: Optional[str] = None,
@@ -365,7 +450,65 @@ class AuthenticatedAlephClient(AlephClient):
         :param address: Address to use (Default: account.get_address())
         :param sync: If true, waits for the message to be processed by the API server (Default: False)
         """
-        pass
+        raise NotImplementedError(
+            "Did you mean to import `AuthenticatedAlephHttpClient`?"
+        )
+
+    async def generate_signed_message(
+        self,
+        message_type: MessageType,
+        content: Dict[str, Any],
+        channel: Optional[str],
+        allow_inlining: bool = True,
+        storage_engine: StorageEnum = StorageEnum.storage,
+    ) -> AlephMessage:
+        """Generate a signed aleph.im message ready to be sent to the network.
+
+        If the content is not inlined, it will be pushed to the storage engine via the API of a Core Channel Node.
+
+        :param message_type: Type of the message (PostMessage, ...)
+        :param content: User-defined content of the message
+        :param channel: Channel to use (Default: "TEST")
+        :param allow_inlining: Whether to allow inlining the content of the message (Default: True)
+        :param storage_engine: Storage engine to use (Default: "storage")
+        """
+
+        message_dict: Dict[str, Any] = {
+            "sender": self.account.get_address(),
+            "chain": self.account.CHAIN,
+            "type": message_type,
+            "content": content,
+            "time": time.time(),
+            "channel": channel,
+        }
+
+        # Use the Pydantic encoder to serialize types like UUID, datetimes, etc.
+        item_content: str = json.dumps(
+            content, separators=(",", ":"), default=extended_json_encoder
+        )
+
+        if allow_inlining and (len(item_content) < settings.MAX_INLINE_SIZE):
+            message_dict["item_content"] = item_content
+            message_dict["item_hash"] = compute_sha256(item_content)
+            message_dict["item_type"] = ItemType.inline
+        else:
+            if storage_engine == StorageEnum.ipfs:
+                message_dict["item_hash"] = await self.ipfs_push(
+                    content=content,
+                )
+                message_dict["item_type"] = ItemType.ipfs
+            else:  # storage
+                assert storage_engine == StorageEnum.storage
+                message_dict["item_hash"] = await self.storage_push(
+                    content=content,
+                )
+                message_dict["item_type"] = ItemType.storage
+
+        message_dict = await self.account.sign_message(message_dict)
+        return parse_message(message_dict)
+
+    # Alias for backwards compatibility
+    _prepare_aleph_message = generate_signed_message
 
     @abstractmethod
     async def submit(
@@ -376,7 +519,8 @@ class AuthenticatedAlephClient(AlephClient):
         storage_engine: StorageEnum = StorageEnum.storage,
         allow_inlining: bool = True,
         sync: bool = False,
-    ) -> Tuple[AlephMessage, MessageStatus]:
+        raise_on_rejected: bool = True,
+    ) -> Tuple[AlephMessage, MessageStatus, Optional[Dict[str, Any]]]:
         """
         Submit a message to the network. This is a generic method that can be used to submit any type of message.
         Prefer using the more specific methods to submit messages.
@@ -387,8 +531,11 @@ class AuthenticatedAlephClient(AlephClient):
         :param storage_engine: Storage engine to use (Default: "storage")
         :param allow_inlining: Whether to allow inlining the content of the message (Default: True)
         :param sync: If true, waits for the message to be processed by the API server (Default: False)
+        :param raise_on_rejected: Whether to raise an exception if the message is rejected (Default: True)
         """
-        pass
+        raise NotImplementedError(
+            "Did you mean to import `AuthenticatedAlephHttpClient`?"
+        )
 
     async def ipfs_push(self, content: Mapping) -> str:
         """

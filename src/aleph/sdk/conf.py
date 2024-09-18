@@ -29,12 +29,21 @@ class Settings(BaseSettings):
     REMOTE_CRYPTO_UNIX_SOCKET: Optional[str] = None
     ADDRESS_TO_USE: Optional[str] = None
 
-    DEFAULT_RUNTIME_ID: str = "f873715dc2feec3833074bd4b8745363a0e0093746b987b4c8191268883b2463"  # Debian 12 official runtime
+    DEFAULT_RUNTIME_ID: str = (
+        "f873715dc2feec3833074bd4b8745363a0e0093746b987b4c8191268883b2463"  # Debian 12 official runtime
+    )
     DEFAULT_VM_MEMORY: int = 256
     DEFAULT_VM_VCPUS: int = 1
     DEFAULT_VM_TIMEOUT: float = 30.0
 
     CODE_USES_SQUASHFS: bool = which("mksquashfs") is not None  # True if command exists
+
+    # Dns resolver
+    DNS_IPFS_DOMAIN = "ipfs.public.aleph.sh"
+    DNS_PROGRAM_DOMAIN = "program.public.aleph.sh"
+    DNS_INSTANCE_DOMAIN = "instance.public.aleph.sh"
+    DNS_STATIC_DOMAIN = "static.public.aleph.sh"
+    DNS_RESOLVERS = ["9.9.9.9", "1.1.1.1"]
 
     class Config:
         env_prefix = "ALEPH_"

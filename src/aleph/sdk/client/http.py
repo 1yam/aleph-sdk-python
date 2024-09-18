@@ -1,7 +1,10 @@
 import json
 import logging
+import os.path
+import ssl
 from io import BytesIO
-from typing import Any, AsyncIterable, Dict, Iterable, List, Optional, Type
+from pathlib import Path
+from typing import Any, AsyncIterable, Dict, Iterable, List, Optional, Type, Union
 
 import aiohttp
 from aleph_message import parse_message
@@ -9,7 +12,7 @@ from aleph_message.models import AlephMessage, ItemHash, ItemType
 from pydantic import ValidationError
 
 from ..conf import settings
-from ..exceptions import FileTooLarge, MessageNotFoundError, MultipleMessagesError
+from ..exceptions import FileTooLarge, ForgottenMessageError, MessageNotFoundError
 from ..query.filters import MessageFilter, PostFilter
 from ..query.responses import MessagesResponse, Post, PostsResponse
 from ..types import GenericMessage
@@ -17,6 +20,7 @@ from ..utils import (
     Writable,
     check_unix_socket_valid,
     copy_async_readable_to_buffer,
+    extended_json_encoder,
     get_message_type_value,
 )
 from .abstract import AlephClient
@@ -34,6 +38,7 @@ class AlephHttpClient(AlephClient):
         api_unix_socket: Optional[str] = None,
         allow_unix_sockets: bool = True,
         timeout: Optional[aiohttp.ClientTimeout] = None,
+        ssl_context: Optional[ssl.SSLContext] = None,
     ):
         """AlephClient can use HTTP(S) or HTTP over Unix sockets.
         Unix sockets are used when running inside a virtual machine,
@@ -43,8 +48,11 @@ class AlephHttpClient(AlephClient):
         if not self.api_server:
             raise ValueError("Missing API host")
 
+        connector: Union[aiohttp.BaseConnector, None]
         unix_socket_path = api_unix_socket or settings.API_UNIX_SOCKET
-        if unix_socket_path and allow_unix_sockets:
+        if ssl_context:
+            connector = aiohttp.TCPConnector(ssl=ssl_context)
+        elif unix_socket_path and allow_unix_sockets:
             check_unix_socket_valid(unix_socket_path)
             connector = aiohttp.UnixConnector(path=unix_socket_path)
         else:
@@ -53,12 +61,18 @@ class AlephHttpClient(AlephClient):
         # ClientSession timeout defaults to a private sentinel object and may not be None.
         self.http_session = (
             aiohttp.ClientSession(
-                base_url=self.api_server, connector=connector, timeout=timeout
+                base_url=self.api_server,
+                connector=connector,
+                timeout=timeout,
+                json_serialize=extended_json_encoder,
             )
             if timeout
             else aiohttp.ClientSession(
                 base_url=self.api_server,
                 connector=connector,
+                json_serialize=lambda obj: json.dumps(
+                    obj, default=extended_json_encoder
+                ),
             )
         )
 
@@ -194,20 +208,41 @@ class AlephHttpClient(AlephClient):
                 else:
                     response.raise_for_status()
 
-    async def download_file(
-        self,
-        file_hash: str,
-    ) -> bytes:
+    async def download_file(self, file_hash: str) -> bytes:
         """
         Get a file from the storage engine as raw bytes.
 
-        Warning: Downloading large files can be slow and memory intensive.
+        Warning: Downloading large files can be slow and memory intensive. Use `download_file_to()` to download them directly to disk instead.
 
         :param file_hash: The hash of the file to retrieve.
         """
         buffer = BytesIO()
         await self.download_file_to_buffer(file_hash, output_buffer=buffer)
         return buffer.getvalue()
+
+    async def download_file_to_path(
+        self,
+        file_hash: str,
+        path: Union[Path, str],
+    ) -> Path:
+        """
+        Download a file from the storage engine to given path.
+
+        :param file_hash: The hash of the file to retrieve.
+        :param path: The path to which the file should be saved.
+        """
+        if not isinstance(path, Path):
+            path = Path(path)
+
+        if not os.path.exists(path):
+            dir_path = os.path.dirname(path)
+            if dir_path:
+                os.makedirs(dir_path, exist_ok=True)
+
+        with open(path, "wb") as file_buffer:
+            await self.download_file_to_buffer(file_hash, output_buffer=file_buffer)
+
+        return path
 
     async def download_file_ipfs(
         self,
@@ -290,21 +325,20 @@ class AlephHttpClient(AlephClient):
         self,
         item_hash: str,
         message_type: Optional[Type[GenericMessage]] = None,
-        channel: Optional[str] = None,
     ) -> GenericMessage:
-        messages_response = await self.get_messages(
-            message_filter=MessageFilter(
-                hashes=[item_hash],
-                channels=[channel] if channel else None,
+        async with self.http_session.get(f"/api/v0/messages/{item_hash}") as resp:
+            try:
+                resp.raise_for_status()
+            except aiohttp.ClientResponseError as e:
+                if e.status == 404:
+                    raise MessageNotFoundError(f"No such hash {item_hash}")
+                raise e
+            message_raw = await resp.json()
+        if message_raw["status"] == "forgotten":
+            raise ForgottenMessageError(
+                f"The requested message {message_raw['item_hash']} has been forgotten by {', '.join(message_raw['forgotten_by'])}"
             )
-        )
-        if len(messages_response.messages) < 1:
-            raise MessageNotFoundError(f"No such hash {item_hash}")
-        if len(messages_response.messages) != 1:
-            raise MultipleMessagesError(
-                f"Multiple messages found for the same item_hash `{item_hash}`"
-            )
-        message: GenericMessage = messages_response.messages[0]
+        message = parse_message(message_raw["message"])
         if message_type:
             expected_type = get_message_type_value(message_type)
             if message.type != expected_type:
@@ -313,6 +347,29 @@ class AlephHttpClient(AlephClient):
                     f"does not match the expected type '{expected_type}'"
                 )
         return message
+
+    async def get_message_error(
+        self,
+        item_hash: str,
+    ) -> Optional[Dict[str, Any]]:
+        async with self.http_session.get(f"/api/v0/messages/{item_hash}") as resp:
+            try:
+                resp.raise_for_status()
+            except aiohttp.ClientResponseError as e:
+                if e.status == 404:
+                    raise MessageNotFoundError(f"No such hash {item_hash}")
+                raise e
+            message_raw = await resp.json()
+        if message_raw["status"] == "forgotten":
+            raise ForgottenMessageError(
+                f"The requested message {message_raw['item_hash']} has been forgotten by {', '.join(message_raw['forgotten_by'])}"
+            )
+        if message_raw["status"] != "rejected":
+            return None
+        return {
+            "error_code": message_raw["error_code"],
+            "details": message_raw["details"],
+        }
 
     async def watch_messages(
         self,

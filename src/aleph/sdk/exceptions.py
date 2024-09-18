@@ -24,7 +24,9 @@ class BroadcastError(Exception):
     Data could not be broadcast to the aleph.im network.
     """
 
-    pass
+    def __init__(self, errors):
+        self.errors = errors
+        super().__init__(errors)
 
 
 class InvalidMessageError(BroadcastError):
@@ -50,3 +52,29 @@ class FileTooLarge(Exception):
     """
 
     pass
+
+
+class DomainConfigurationError(Exception):
+    """Raised when the domain checks are not satisfied"""
+
+    pass
+
+
+class ForgottenMessageError(QueryError):
+    """The requested message was forgotten"""
+
+    pass
+
+
+class InsufficientFundsError(Exception):
+    """Raised when the account does not have enough funds to perform an action"""
+
+    required_funds: float
+    available_funds: float
+
+    def __init__(self, required_funds: float, available_funds: float):
+        self.required_funds = required_funds
+        self.available_funds = available_funds
+        super().__init__(
+            f"Insufficient funds: required {required_funds}, available {available_funds}"
+        )
